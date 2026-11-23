@@ -1,0 +1,47 @@
+server:
+  shutdown: graceful
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 35s
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/ads}
+    username: ads
+    password: ${DATABASE_PASSWORD:local-demo-db}
+    hikari:
+      connection-timeout: 2000
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 12000
+        request.timeout.ms: 4000
+        max.block.ms: 4000
+    consumer:
+      group-id: ads-attribution
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      max-poll-records: 50
+    listener:
+      ack-mode: manual_immediate
+      concurrency: ${WORKER_CONCURRENCY:1}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        ads.processing: true
+        http.server.requests: true
+logging:
+  structured:
+    format:
+      console: logstash
+ads:
+  worker: ${WORKER_ENABLED:false}
+  partitions: ${KAFKA_PARTITIONS:6}
+  replay-token: ${REPLAY_TOKEN:}
+  requests-per-second: ${REQUESTS_PER_SECOND:100}
