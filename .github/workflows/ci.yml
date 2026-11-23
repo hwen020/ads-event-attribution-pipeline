@@ -20,14 +20,7 @@ jobs:
       - name: Static analysis
         run: mvn -B -ntp com.github.spotbugs:spotbugs-maven-plugin:4.9.3.0:check
       - name: Dependency vulnerability audit
-        uses: aquasecurity/trivy-action@0.32.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln
-          format: table
-          severity: HIGH,CRITICAL
-          exit-code: '1'
+        run: docker run --rm -v "${{ github.workspace }}/target:/artifacts:ro" aquasec/trivy:0.76.2 filesystem --scanners vuln --severity HIGH,CRITICAL --exit-code 1 /artifacts
       - name: Compose validation
         run: docker compose config --quiet
       - name: Image build
