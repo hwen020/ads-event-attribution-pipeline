@@ -55,7 +55,7 @@ class LagMonitor {
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             lag.set(-1);
-        } catch (Exception unavailable) {
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException unavailable) {
             lag.set(-1);
         }
     }

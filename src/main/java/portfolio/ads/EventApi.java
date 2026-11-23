@@ -22,7 +22,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/events")
-class EventApi {
+final class EventApi {
     private static final int MAX_BYTES = 256 * 1024;
     private final ObjectMapper json;
     private final Validator validator;
