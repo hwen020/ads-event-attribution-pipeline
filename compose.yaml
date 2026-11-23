@@ -8,6 +8,7 @@ x-app: &app
       condition: service_healthy
   stop_grace_period: 45s
 x-app-env: &app-env
+  JAVA_TOOL_OPTIONS: -Xms32m -Xmx384m -XX:ActiveProcessorCount=4
   KAFKA_BOOTSTRAP: kafka:29092
   DATABASE_URL: jdbc:postgresql://postgres:5432/ads
   DATABASE_PASSWORD: ${DATABASE_PASSWORD:-local-demo-db}
@@ -16,6 +17,7 @@ services:
     image: apache/kafka:3.9.1
     environment:
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_HEAP_OPTS: -Xms128m -Xmx512m
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:9093
@@ -43,7 +45,7 @@ services:
     volumes:
       - postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "ads"]
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "ads"]
       interval: 3s
       timeout: 3s
       retries: 20

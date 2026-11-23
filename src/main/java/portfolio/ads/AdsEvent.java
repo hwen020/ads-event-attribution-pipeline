@@ -16,6 +16,7 @@ public record AdsEvent(
 ) {
     public enum Kind { IMPRESSION, CLICK, CONVERSION }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     @AssertTrue(message = "Conversion and touch fields must match the event type")
     public boolean isShapeValid() {
         if (type == Kind.CONVERSION) {

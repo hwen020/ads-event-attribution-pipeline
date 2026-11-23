@@ -132,6 +132,56 @@ class PipelineIT {
         }
     }
 
+    @Test
+    void convergesAcrossArrivalOrdersAndChecksViewWindow() {
+        var time = Instant.now();
+        var left = UUID.randomUUID();
+        var right = UUID.randomUUID();
+        var a = conversion(left, time, UUID.randomUUID());
+        var b = conversion(right, time, UUID.randomUUID());
+        var leftView = touch(left, time.minus(Duration.ofHours(25)), AdsEvent.Kind.IMPRESSION);
+        var rightView = touch(right, leftView.eventTime(), AdsEvent.Kind.IMPRESSION);
+        var leftClick = touch(left, time.minus(Duration.ofHours(32)), AdsEvent.Kind.CLICK);
+        var rightClick = touch(right, leftClick.eventTime(), AdsEvent.Kind.CLICK);
+        send(a);
+        send(leftView);
+        send(rightView);
+        send(rightClick);
+        send(b);
+        awaitWinner(b, rightClick);
+        await().atMost(WAIT).untilAsserted(() -> {
+            assertThat(db.queryForObject("SELECT count(*) FROM raw_events WHERE user_id=?", Long.class, left))
+                .isEqualTo(2);
+            assertThat(result(a).get("touch_id")).isNull();
+        });
+        send(leftClick);
+        awaitWinner(a, leftClick);
+    }
+
+    @Test
+    void resumesAReplayWhoseTransactionWasInterrupted() {
+        var time = Instant.now();
+        var user = UUID.randomUUID();
+        var conversion = conversion(user, time, UUID.randomUUID());
+        send(conversion);
+        await().atMost(WAIT).untilAsserted(() -> assertThat(result(conversion).get("touch_id")).isNull());
+        var touched = touch(user, time.minusSeconds(1), AdsEvent.Kind.CLICK);
+        send(touched);
+        awaitWinner(conversion, touched);
+        var once = new AtomicInteger();
+        doAnswer(call -> {
+            if (once.incrementAndGet() == 1) throw new IllegalStateException("Interrupted replay transaction");
+            return call.callRealMethod();
+        }).when(store).lock(eq(user));
+        UUID job = replay.create(time.minusSeconds(5), time.plusSeconds(5), touched.campaignId());
+        await().atMost(WAIT).untilAsserted(() -> assertThat(replay.get(job).get("status")).isEqualTo("FAILED"));
+        assertThat(replay.get(job).get("scanned")).isEqualTo(0L);
+        assertThat(replay.resume(job)).isTrue();
+        await().atMost(WAIT).untilAsserted(() -> assertThat(replay.get(job).get("status")).isEqualTo("COMPLETE"));
+        assertThat(replay.get(job).get("scanned")).isEqualTo(2L);
+        assertThat(replay.get(job).get("corrected")).isEqualTo(0L);
+    }
+
     private void send(AdsEvent event) {
         assertThat(http.postForEntity("/api/v1/events", event, String.class).getStatusCode().value())
             .isEqualTo(202);

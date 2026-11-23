@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @RestController
+@org.springframework.transaction.annotation.Transactional(readOnly = true, isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
 @RequestMapping("/api/v1")
 class MetricsApi {
     private static final String FROM = "2000-01-01T00:00:00Z";
@@ -40,7 +41,7 @@ class MetricsApi {
             EventStore.sql(from), EventStore.sql(to), campaignId, campaignId);
         result.put("attributed_revenue", revenue(from, to, campaignId));
         result.put("processing_latency_ms", db.queryForObject(
-            "SELECT avg(extract(epoch FROM processed_at-received_at)*1000) FROM raw_events WHERE " + FILTER,
+            "SELECT avg(extract(epoch FROM processed_at-received_at)*1000) FROM (SELECT r.processed_at,r.received_at,r.event_time,coalesce(r.campaign_id,a.campaign_id) AS campaign_id FROM raw_events r LEFT JOIN attribution_results a ON a.event_id=r.event_id) events WHERE " + FILTER,
             java.math.BigDecimal.class, EventStore.sql(from), EventStore.sql(to), campaignId, campaignId));
         return result;
     }
@@ -86,6 +87,7 @@ class MetricsApi {
             EventStore.sql(from), EventStore.sql(to), campaignId, campaignId, size, offset(page, size));
     }
 
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     @GetMapping("/health")
     ResponseEntity<?> health() {
         var report = health.health();
