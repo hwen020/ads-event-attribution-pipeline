@@ -46,6 +46,7 @@ class PipelineIT {
 
     @Autowired TestRestTemplate http;
     @Autowired JdbcTemplate db;
+    @Autowired javax.sql.DataSource dataSource;
     @Autowired Replay replay;
     @Autowired KafkaTemplate<String, String> kafka;
     @Autowired ObjectMapper json;
@@ -91,13 +92,24 @@ class PipelineIT {
         var user = UUID.randomUUID();
         var conversion = conversion(user, Instant.now(), UUID.randomUUID());
         var attempts = new AtomicInteger();
+        var visibleBeforeAck = new java.util.concurrent.atomic.AtomicBoolean();
         doAnswer(invocation -> {
             boolean applied = (boolean) invocation.callRealMethod();
-            if (attempts.incrementAndGet() == 1) throw new IllegalStateException("Simulated crash before ack");
+            if (attempts.incrementAndGet() == 1) {
+                try (var independent = dataSource.getConnection();
+                     var query = independent.prepareStatement("SELECT 1 FROM raw_events WHERE event_id=?")) {
+                    query.setObject(1, conversion.eventId());
+                    try (var rows = query.executeQuery()) {
+                        visibleBeforeAck.set(rows.next());
+                    }
+                }
+                throw new IllegalStateException("Simulated crash before ack");
+            }
             return applied;
         }).when(store).apply(argThat(e -> e != null && e.eventId().equals(conversion.eventId())), anyString());
         send(conversion);
         await().atMost(WAIT).untilAsserted(() -> assertThat(attempts.get()).isGreaterThanOrEqualTo(2));
+        assertThat(visibleBeforeAck.get()).isTrue();
         assertThat(db.queryForObject("SELECT count(*) FROM raw_events WHERE user_id=?", Long.class, user))
             .isEqualTo(1);
         assertThat(db.queryForObject("SELECT count(*) FROM attribution_results WHERE user_id=?", Long.class, user))
@@ -170,12 +182,12 @@ class PipelineIT {
         awaitWinner(conversion, touched);
         var once = new AtomicInteger();
         doAnswer(call -> {
-            if (once.incrementAndGet() == 1) throw new IllegalStateException("Interrupted replay transaction");
+            if (once.incrementAndGet() == 2) throw new IllegalStateException("Interrupted replay transaction");
             return call.callRealMethod();
         }).when(store).lock(eq(user));
         UUID job = replay.create(time.minusSeconds(5), time.plusSeconds(5), touched.campaignId());
         await().atMost(WAIT).untilAsserted(() -> assertThat(replay.get(job).get("status")).isEqualTo("FAILED"));
-        assertThat(replay.get(job).get("scanned")).isEqualTo(0L);
+        assertThat(replay.get(job).get("scanned")).isEqualTo(1L);
         assertThat(replay.resume(job)).isTrue();
         await().atMost(WAIT).untilAsserted(() -> assertThat(replay.get(job).get("status")).isEqualTo("COMPLETE"));
         assertThat(replay.get(job).get("scanned")).isEqualTo(2L);
