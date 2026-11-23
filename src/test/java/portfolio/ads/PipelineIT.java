@@ -7,6 +7,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.core.ConsumerFactory;
+import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
+import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.common.TopicPartition;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -25,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.doAnswer;
@@ -49,6 +54,9 @@ class PipelineIT {
     @Autowired javax.sql.DataSource dataSource;
     @Autowired Replay replay;
     @Autowired KafkaTemplate<String, String> kafka;
+    @Autowired ConsumerFactory<String, String> consumerFactory;
+    @Autowired KafkaListenerEndpointRegistry listeners;
+    @Autowired Transport transport;
     @Autowired ObjectMapper json;
     @MockitoSpyBean EventStore store;
 
@@ -88,33 +96,55 @@ class PipelineIT {
     }
 
     @Test
-    void retriesAfterDatabaseCommitBeforeAcknowledgingKafka() {
+    void retriesAfterDatabaseCommitBeforeAcknowledgingKafka() throws Exception {
         var user = UUID.randomUUID();
-        var conversion = conversion(user, Instant.now(), UUID.randomUUID());
-        var attempts = new AtomicInteger();
-        var visibleBeforeAck = new java.util.concurrent.atomic.AtomicBoolean();
-        doAnswer(invocation -> {
-            boolean applied = (boolean) invocation.callRealMethod();
-            if (attempts.incrementAndGet() == 1) {
-                try (var independent = dataSource.getConnection();
-                     var query = independent.prepareStatement("SELECT 1 FROM raw_events WHERE event_id=?")) {
-                    query.setObject(1, conversion.eventId());
-                    try (var rows = query.executeQuery()) {
-                        visibleBeforeAck.set(rows.next());
+        var time = Instant.now();
+        var conversion = conversion(user, time, UUID.randomUUID());
+        listeners.stop();
+        TopicPartition partition;
+        long offset;
+        try {
+            String envelope = json.writeValueAsString(new Transport.Envelope(conversion, time));
+            var position = kafka.send(KafkaConfiguration.EVENTS, user.toString(), envelope)
+                .get(10, TimeUnit.SECONDS).getRecordMetadata();
+            partition = new TopicPartition(position.topic(), position.partition());
+            offset = position.offset();
+            try (var probe = consumerFactory.createConsumer("fault-probe", "fault-probe-", "")) {
+                probe.assign(List.of(partition));
+                probe.seek(partition, offset);
+                var records = probe.poll(Duration.ofSeconds(10)).records(partition);
+                assertThat(records).hasSize(1);
+                assertThatThrownBy(() -> transport.consume(records.getFirst(), () -> {
+                    try (var independent = dataSource.getConnection();
+                         var query = independent.prepareStatement("SELECT 1 FROM raw_events WHERE event_id=?")) {
+                        query.setObject(1, conversion.eventId());
+                        try (var rows = query.executeQuery()) {
+                            assertThat(rows.next()).as("row committed before acknowledgment").isTrue();
+                        }
+                    } catch (java.sql.SQLException failure) {
+                        throw new AssertionError(failure);
                     }
-                }
-                throw new IllegalStateException("Simulated crash before ack");
+                    throw new IllegalStateException("Simulated crash before ack");
+                })).isInstanceOf(IllegalStateException.class).hasMessage("Simulated crash before ack");
             }
-            return applied;
-        }).when(store).apply(argThat(e -> e != null && e.eventId().equals(conversion.eventId())), anyString());
-        send(conversion);
-        await().atMost(WAIT).untilAsserted(() -> assertThat(attempts.get()).isGreaterThanOrEqualTo(2));
-        assertThat(visibleBeforeAck.get()).isTrue();
+        } finally {
+            listeners.start();
+        }
+
+        try (var admin = Admin.create(Map.of("bootstrap.servers", KAFKA.getBootstrapServers()))) {
+            await().atMost(WAIT).untilAsserted(() -> {
+                var offsets = admin.listConsumerGroupOffsets("ads-attribution").partitionsToOffsetAndMetadata()
+                    .get(5, TimeUnit.SECONDS);
+                assertThat(offsets.get(partition)).isNotNull();
+                assertThat(offsets.get(partition).offset()).isGreaterThan(offset);
+            });
+        }
         assertThat(db.queryForObject("SELECT count(*) FROM raw_events WHERE user_id=?", Long.class, user))
             .isEqualTo(1);
         assertThat(db.queryForObject("SELECT count(*) FROM attribution_results WHERE user_id=?", Long.class, user))
             .isEqualTo(1);
     }
+
 
     @Test
     void rejectsOverdueTouchAndQuarantinesPoisonRecord() throws Exception {
