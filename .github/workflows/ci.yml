@@ -24,4 +24,4 @@ jobs:
       - name: Compose validation
         run: docker compose config --quiet
       - name: Image build
-        run: docker build -t ads-attribution:ci .
+        run: docker build --build-arg JAR_SOURCE=prebuilt -t ads-attribution:ci .

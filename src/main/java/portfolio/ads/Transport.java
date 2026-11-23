@@ -95,9 +95,10 @@ class Transport {
                 }
                 event = envelope.event().received(envelope.receivedAt());
             } catch (com.fasterxml.jackson.core.JsonProcessingException | IllegalArgumentException invalid) {
-                record.headers().add("failure", "invalid-envelope".getBytes(StandardCharsets.UTF_8));
+                var headers = new RecordHeaders(record.headers().toArray());
+                headers.add("failure", "invalid-envelope".getBytes(StandardCharsets.UTF_8));
                 kafka.send(new ProducerRecord<>(KafkaConfiguration.DLQ, record.partition(),
-                    record.key(), record.value(), record.headers())).get(14, TimeUnit.SECONDS);
+                    record.key(), record.value(), headers)).get(14, TimeUnit.SECONDS);
                 meters.counter("ads.dlq").increment();
                 LoggerFactory.getLogger(Transport.class).warn("Quarantined an invalid event");
                 ack.acknowledge();

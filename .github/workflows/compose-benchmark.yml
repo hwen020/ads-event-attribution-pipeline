@@ -9,12 +9,21 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Build application image
+        run: |
+          mvn -B -ntp -DskipTests package
+          docker build --build-arg JAR_SOURCE=prebuilt -t ads-attribution:local .
       - name: Start isolated Compose stack
         run: |
           token="$(openssl rand -hex 24)"
           echo "::add-mask::$token"
           echo "REPLAY_TOKEN=$token" >> "$GITHUB_ENV"
-          REPLAY_TOKEN="$token" docker compose up --build --wait --wait-timeout 240
+          REPLAY_TOKEN="$token" docker compose up --no-build --wait --wait-timeout 240
       - name: Fault and recovery checks
         run: python3 scripts/faults.py
       - name: Measure one and three consumers

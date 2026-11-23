@@ -1,4 +1,6 @@
 .git
 .env
-target
+hs_err_pid*.log
+target/*
+!target/ads-attribution-*.jar
 benchmark-results

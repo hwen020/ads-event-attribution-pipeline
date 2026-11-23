@@ -24,7 +24,7 @@ class LagMonitor {
     LagMonitor(@Value("${spring.kafka.bootstrap-servers}") String bootstrap,
                @Value("${spring.kafka.consumer.group-id}") String group, MeterRegistry meters) {
         this.group = group;
-        admin = Admin.create(Map.of("bootstrap.servers", bootstrap, "default.api.timeout.ms", 2500));
+        admin = Admin.create(Map.of("bootstrap.servers", bootstrap, "default.api.timeout.ms", 2500, "request.timeout.ms", 1500));
         meters.gauge("ads.consumer.lag", lag);
     }
 

@@ -1,5 +1,6 @@
 name: ads-event-attribution
 x-app: &app
+  image: ads-attribution:local
   build: .
   depends_on:
     kafka:
