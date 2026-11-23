@@ -20,7 +20,17 @@ jobs:
       - name: Static analysis
         run: mvn -B -ntp com.github.spotbugs:spotbugs-maven-plugin:4.9.3.0:check
       - name: Dependency vulnerability audit
-        run: docker run --rm -v "${{ github.workspace }}/target:/artifacts:ro" aquasec/trivy:0.76.2 filesystem --scanners vuln --severity HIGH,CRITICAL --exit-code 1 /artifacts
+        if: ${{ !cancelled() }}
+        run: |
+          mvn -B -ntp org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom -DoutputFormat=json
+          jq -e '.components | length > 0' target/bom.json
+          status=0
+          docker run --rm -v "$PWD/target:/artifacts:ro" aquasec/trivy:0.76.2 sbom \
+            --scanners vuln --severity HIGH,CRITICAL --list-all-pkgs --exit-code 1 --format json \
+            /artifacts/bom.json > target/dependency-audit.json || status=$?
+          jq -e '([.Results[]?.Packages[]?] | length) as $n | if $n > 0 then $n else error("No packages scanned") end' target/dependency-audit.json
+          jq '.Results[]?.Vulnerabilities[]? | {VulnerabilityID,PkgName,InstalledVersion,FixedVersion,Severity}' target/dependency-audit.json
+          exit "$status"
       - name: Compose validation
         run: docker compose config --quiet
       - name: Image build
