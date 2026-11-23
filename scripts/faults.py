@@ -104,7 +104,25 @@ def main():
         assert_credit()
     else:
         print("Replay restart check skipped because REPLAY_TOKEN is unset")
-    print("Passed worker restart, group rejoin, PostgreSQL and Kafka outages, duplicate and late arrival checks")
+    # Rewind this isolated demo consumer group and wait for it to catch up again.
+    group = ("/opt/kafka/bin/kafka-consumer-groups.sh", "--bootstrap-server", "kafka:29092",
+             "--group", "ads-attribution")
+    compose("stop", "worker")
+    try:
+        compose("exec", "-T", "kafka", *group, "--reset-offsets", "--topic", "ads.events.v1",
+                "--to-earliest", "--execute")
+    finally:
+        compose("start", "worker")
+
+    def caught_up():
+        report = compose("exec", "-T", "kafka", *group, "--describe")
+        rows = [line.split() for line in report.splitlines() if " ads.events.v1 " in line]
+        return len(rows) == 6 and all(row[5] in ("0", "-") for row in rows)
+
+    eventually(caught_up)
+    assert count() == 3
+    assert_credit()
+    print("Passed worker restart, offset rewind, PostgreSQL and Kafka outages, duplicate and late arrival checks")
 
 
 if __name__ == "__main__":

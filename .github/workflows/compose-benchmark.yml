@@ -1,0 +1,40 @@
+name: Compose fault drill and benchmark
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start isolated Compose stack
+        run: |
+          token="$(openssl rand -hex 24)"
+          echo "::add-mask::$token"
+          echo "REPLAY_TOKEN=$token" >> "$GITHUB_ENV"
+          REPLAY_TOKEN="$token" docker compose up --build --wait --wait-timeout 240
+      - name: Fault and recovery checks
+        run: python3 scripts/faults.py
+      - name: Measure one and three consumers
+        run: |
+          for workers in 1 3; do
+            WORKER_CONCURRENCY="$workers" docker compose up -d --no-deps --wait worker
+            for count in 1000 10000 100000; do
+              python3 scripts/benchmark.py "$count" --run "c${workers}-n${count}" --timeout 420
+            done
+          done
+      - name: Upload measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark-results/*.json
+          if-no-files-found: warn
+      - name: Diagnose stack errors
+        if: failure()
+        run: docker compose ps -a && docker compose logs --tail=80 api worker kafka postgres
+      - name: Stop Compose stack
+        if: always()
+        run: docker compose down
