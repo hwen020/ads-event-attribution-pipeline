@@ -102,6 +102,7 @@ def main():
                 return False
         eventually(replay_finished)
         assert_credit()
+        print("Replay completed after API restart")
     else:
         print("Replay restart check skipped because REPLAY_TOKEN is unset")
     # Rewind this isolated demo consumer group and wait for it to catch up again.
@@ -109,8 +110,9 @@ def main():
              "--group", "ads-attribution")
     compose("stop", "worker")
     try:
-        compose("exec", "-T", "kafka", *group, "--reset-offsets", "--topic", "ads.events.v1",
+        report = compose("exec", "-T", "kafka", *group, "--reset-offsets", "--topic", "ads.events.v1",
                 "--to-earliest", "--execute")
+        assert "Error:" not in report and report.count("ads.events.v1") == 6, report
     finally:
         compose("start", "worker")
 

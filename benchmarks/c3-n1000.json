@@ -1,0 +1,18 @@
+{
+  "run": "c3-n1000",
+  "events": 1000,
+  "persisted": 1000,
+  "docker_cpu_memory_os": "4 CPUs / 16759431168 bytes / Ubuntu 26.04.1 LTS",
+  "host": "Linux-7.0.0-1020-azure-x86_64-with-glibc2.43",
+  "seconds": 3.455,
+  "observed_events_per_second": 289.41,
+  "db_latency_ms_p50_p95_p99": [
+    2403.5745,
+    2807.47785,
+    2839.88307
+  ],
+  "ack_error_rate": 0.0,
+  "periodic_sample_peak_committed_lag": 0,
+  "worker_concurrency": "3",
+  "partition_count": 6
+}
