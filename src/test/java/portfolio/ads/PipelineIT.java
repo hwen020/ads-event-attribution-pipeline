@@ -182,6 +182,53 @@ class PipelineIT {
         assertThat(replay.get(job).get("corrected")).isEqualTo(0L);
     }
 
+    @Test
+    void reportsPersistedCampaignMetricsAcrossIndependentProducers() throws Exception {
+        var time = Instant.now();
+        var user = UUID.randomUUID();
+        var view = touch(user, time.minusSeconds(2), AdsEvent.Kind.IMPRESSION);
+        var click = new AdsEvent(UUID.randomUUID(), user, AdsEvent.Kind.CLICK, view.campaignId(),
+            view.adId(), null, null, null, time.minusSeconds(1), time, "integration");
+        var conversion = conversion(user, time, UUID.randomUUID());
+        send(view);
+        try (var producer = new org.apache.kafka.clients.producer.KafkaProducer<String, String>(
+                Map.of("bootstrap.servers", KAFKA.getBootstrapServers(), "acks", "all"),
+                new org.apache.kafka.common.serialization.StringSerializer(),
+                new org.apache.kafka.common.serialization.StringSerializer())) {
+            String envelope = json.writeValueAsString(new Transport.Envelope(click, time));
+            producer.send(new org.apache.kafka.clients.producer.ProducerRecord<>(
+                KafkaConfiguration.EVENTS, user.toString(), envelope)).get(10, TimeUnit.SECONDS);
+        }
+        send(click);
+        send(conversion);
+        awaitWinner(conversion, click);
+        var metrics = http.getForEntity("/api/v1/metrics/campaigns/{id}", Map.class, view.campaignId());
+        assertThat(metrics.getStatusCode().value()).isEqualTo(200);
+        var body = metrics.getBody();
+        assertThat(body.get("impressions")).isEqualTo(1);
+        assertThat(body.get("clicks")).isEqualTo(1);
+        assertThat(body.get("conversions")).isEqualTo(1);
+        assertThat(((Map<?, ?>) body.get("attributed_revenue")).get("USD")).isEqualTo(12.5);
+        var campaigns = http.getForEntity("/api/v1/metrics/campaigns?campaignId={id}", List.class,
+            view.campaignId());
+        assertThat(campaigns.getStatusCode().value()).isEqualTo(200);
+        assertThat(((Map<?, ?>) campaigns.getBody().getFirst()).get("attributed_revenue"))
+            .isInstanceOf(Map.class);
+        assertThat(http.getForEntity("/api/v1/health", Map.class).getStatusCode().value()).isEqualTo(200);
+    }
+
+    @Test
+    void retainsOverdueConversionsWithoutCreditingRevenue() {
+        var time = Instant.now().minus(Duration.ofDays(3));
+        var conversion = conversion(UUID.randomUUID(), time, UUID.randomUUID());
+        send(conversion);
+        await().atMost(WAIT).untilAsserted(() -> {
+            var row = result(conversion);
+            assertThat(row.get("eligible")).isEqualTo(false);
+            assertThat(row.get("touch_id")).isNull();
+        });
+    }
+
     private void send(AdsEvent event) {
         assertThat(http.postForEntity("/api/v1/events", event, String.class).getStatusCode().value())
             .isEqualTo(202);

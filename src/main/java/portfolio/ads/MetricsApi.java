@@ -1,6 +1,11 @@
 package portfolio.ads;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.actuate.health.HealthEndpoint;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -11,7 +16,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @RestController
-@org.springframework.transaction.annotation.Transactional(readOnly = true, isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
+@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
 @RequestMapping("/api/v1")
 class MetricsApi {
     private static final String FROM = "2000-01-01T00:00:00Z";
@@ -27,9 +32,12 @@ class MetricsApi {
     private final JdbcTemplate db;
     private final HealthEndpoint health;
 
-    MetricsApi(JdbcTemplate db, HealthEndpoint health) {
+    private final ObjectMapper json;
+
+    MetricsApi(JdbcTemplate db, HealthEndpoint health, ObjectMapper json) {
         this.db = db;
         this.health = health;
+        this.json = json;
     }
 
     @GetMapping("/metrics/overview")
@@ -52,9 +60,9 @@ class MetricsApi {
         @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size) {
         requireRange(from, to);
         long offset = offset(page, size);
-        return db.queryForList("SELECT campaign_id, " + SUMS + """
+        var rows = db.queryForList("SELECT campaign_id, " + SUMS + """
             , coalesce(jsonb_object_agg(currency, total) FILTER (WHERE currency IS NOT NULL),
-                       '{}'::jsonb)::text AS revenue_by_currency
+                       '{}'::jsonb)::text AS attributed_revenue
             FROM (
                 SELECT campaign_id, currency, sum(impressions) AS impressions, sum(clicks) AS clicks,
                     sum(conversions) AS conversions, sum(unattributed) AS unattributed, sum(revenue) AS total
@@ -63,6 +71,14 @@ class MetricsApi {
                 GROUP BY campaign_id, currency
             ) grouped GROUP BY campaign_id ORDER BY campaign_id LIMIT ? OFFSET ?
             """, EventStore.sql(from), EventStore.sql(to), campaignId, campaignId, size, offset);
+        for (var row : rows) {
+            try {
+                row.put("attributed_revenue", json.readTree((String) row.get("attributed_revenue")));
+            } catch (JsonProcessingException malformed) {
+                throw new IllegalStateException("Invalid revenue aggregate", malformed);
+            }
+        }
+        return rows;
     }
 
     @GetMapping("/metrics/campaigns/{campaignId}")
@@ -87,7 +103,7 @@ class MetricsApi {
             EventStore.sql(from), EventStore.sql(to), campaignId, campaignId, size, offset(page, size));
     }
 
-    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @GetMapping("/health")
     ResponseEntity<?> health() {
         var report = health.health();
@@ -100,12 +116,16 @@ class MetricsApi {
             org.springframework.http.HttpStatus.BAD_REQUEST, "from must precede to");
     }
 
-    private List<Map<String, Object>> revenue(Instant from, Instant to, UUID campaign) {
-        return db.queryForList("""
+    private Map<String, java.math.BigDecimal> revenue(Instant from, Instant to, UUID campaign) {
+        return db.query("""
             SELECT currency, sum(revenue) AS revenue FROM campaign_metrics WHERE currency IS NOT NULL
                 AND campaign_id IS NOT NULL AND
             """ + FILTER + " GROUP BY currency ORDER BY currency",
-            EventStore.sql(from), EventStore.sql(to), campaign, campaign);
+            rs -> {
+                var totals = new java.util.TreeMap<String, java.math.BigDecimal>();
+                while (rs.next()) totals.put(rs.getString("currency"), rs.getBigDecimal("revenue"));
+                return totals;
+            }, EventStore.sql(from), EventStore.sql(to), campaign, campaign);
     }
 
     private static long offset(int page, int size) {
