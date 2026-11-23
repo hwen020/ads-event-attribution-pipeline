@@ -1,0 +1,161 @@
+package portfolio.ads;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.kafka.KafkaContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.doAnswer;
+
+@Testcontainers
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+    properties = {"ads.worker=true", "spring.kafka.listener.concurrency=2"})
+class PipelineIT {
+    @Container static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:3.9.1");
+    @Container static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17");
+
+    @DynamicPropertySource
+    static void settings(DynamicPropertyRegistry registry) {
+        registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES::getUsername);
+        registry.add("spring.datasource.password", POSTGRES::getPassword);
+    }
+
+    @Autowired TestRestTemplate http;
+    @Autowired JdbcTemplate db;
+    @Autowired Replay replay;
+    @Autowired KafkaTemplate<String, String> kafka;
+    @Autowired ObjectMapper json;
+    @MockitoSpyBean EventStore store;
+
+    private static final Duration WAIT = Duration.ofSeconds(45);
+
+    @Test
+    void repairsLateArrivalAndReplaysWithoutDoubleCounting() {
+        var now = Instant.now();
+        var user = UUID.randomUUID();
+        var conversion = conversion(user, now.minusSeconds(10), UUID.randomUUID());
+        send(conversion);
+        await().atMost(WAIT).untilAsserted(() -> assertThat(result(conversion).get("touch_id")).isNull());
+        var view = touch(user, now.minusSeconds(20), AdsEvent.Kind.IMPRESSION);
+        send(view);
+        awaitWinner(conversion, view);
+        var click = touch(user, now.minusSeconds(30), AdsEvent.Kind.CLICK);
+        send(click);
+        awaitWinner(conversion, click);
+        var tie = touch(user, click.eventTime(), AdsEvent.Kind.CLICK);
+        send(tie);
+        send(tie);
+        var businessDuplicate = conversion(user, conversion.eventTime(), conversion.conversionId());
+        send(businessDuplicate);
+        await().atMost(WAIT).untilAsserted(() -> assertThat(db.queryForObject(
+            "SELECT count(*) FROM raw_events WHERE user_id=?", Long.class, user)).isEqualTo(5));
+        UUID expected = click.eventId().toString().compareTo(tie.eventId().toString()) > 0
+            ? click.eventId() : tie.eventId();
+        assertThat(result(conversion).get("touch_id")).isEqualTo(expected);
+        long version = ((Number) result(conversion).get("version")).longValue();
+        UUID job = replay.create(now.minusSeconds(90), now.plusSeconds(90), null);
+        await().atMost(WAIT).untilAsserted(() -> assertThat(replay.get(job).get("status")).isEqualTo("COMPLETE"));
+        assertThat(replay.get(job).get("corrected")).isEqualTo(0L);
+        assertThat(result(conversion).get("version")).isEqualTo(version);
+        assertThat(db.queryForObject("SELECT count(*) FROM attribution_results WHERE user_id=?",
+            Long.class, user)).isEqualTo(1);
+        assertThat(((BigDecimal) result(conversion).get("value"))).isEqualByComparingTo("12.50");
+    }
+
+    @Test
+    void retriesAfterDatabaseCommitBeforeAcknowledgingKafka() {
+        var user = UUID.randomUUID();
+        var conversion = conversion(user, Instant.now(), UUID.randomUUID());
+        var attempts = new AtomicInteger();
+        doAnswer(invocation -> {
+            boolean applied = (boolean) invocation.callRealMethod();
+            if (attempts.incrementAndGet() == 1) throw new IllegalStateException("Simulated crash before ack");
+            return applied;
+        }).when(store).apply(argThat(e -> e != null && e.eventId().equals(conversion.eventId())), anyString());
+        send(conversion);
+        await().atMost(WAIT).untilAsserted(() -> assertThat(attempts.get()).isGreaterThanOrEqualTo(2));
+        assertThat(db.queryForObject("SELECT count(*) FROM raw_events WHERE user_id=?", Long.class, user))
+            .isEqualTo(1);
+        assertThat(db.queryForObject("SELECT count(*) FROM attribution_results WHERE user_id=?", Long.class, user))
+            .isEqualTo(1);
+    }
+
+    @Test
+    void rejectsOverdueTouchAndQuarantinesPoisonRecord() throws Exception {
+        var now = Instant.now();
+        var user = UUID.randomUUID();
+        var old = touch(user, now.minus(Duration.ofDays(3)), AdsEvent.Kind.CLICK);
+        var conversion = conversion(user, now, UUID.randomUUID());
+        send(old);
+        kafka.send(KafkaConfiguration.EVENTS, user.toString(), "{invalid").get(10, TimeUnit.SECONDS);
+        send(conversion);
+        await().atMost(WAIT).untilAsserted(() -> assertThat(result(conversion).get("touch_id")).isNull());
+        assertThat(db.queryForObject("SELECT eligible FROM raw_events WHERE event_id=?", Boolean.class, old.eventId()))
+            .isFalse();
+        try (var admin = org.apache.kafka.clients.admin.Admin.create(
+            Map.of("bootstrap.servers", KAFKA.getBootstrapServers()))) {
+            await().atMost(WAIT).untilAsserted(() -> {
+                var topic = KafkaConfiguration.DLQ;
+                var parts = admin.describeTopics(List.of(topic)).allTopicNames().get(5, TimeUnit.SECONDS);
+                var query = new java.util.HashMap<org.apache.kafka.common.TopicPartition,
+                    org.apache.kafka.clients.admin.OffsetSpec>();
+                parts.get(topic).partitions().forEach(p -> query.put(
+                    new org.apache.kafka.common.TopicPartition(topic, p.partition()),
+                    org.apache.kafka.clients.admin.OffsetSpec.latest()));
+                assertThat(admin.listOffsets(query).all().get(5, TimeUnit.SECONDS).values().stream()
+                    .mapToLong(o -> o.offset()).sum()).isPositive();
+            });
+        }
+    }
+
+    private void send(AdsEvent event) {
+        assertThat(http.postForEntity("/api/v1/events", event, String.class).getStatusCode().value())
+            .isEqualTo(202);
+    }
+
+    private Map<String, Object> result(AdsEvent conversion) {
+        var rows = db.queryForList("SELECT * FROM attribution_results WHERE conversion_id=?",
+            conversion.conversionId());
+        assertThat(rows).hasSize(1);
+        return rows.getFirst();
+    }
+
+    private void awaitWinner(AdsEvent conversion, AdsEvent touch) {
+        await().atMost(WAIT).untilAsserted(() -> assertThat(result(conversion).get("touch_id"))
+            .isEqualTo(touch.eventId()));
+    }
+
+    private static AdsEvent conversion(UUID user, Instant time, UUID id) {
+        return new AdsEvent(UUID.randomUUID(), user, AdsEvent.Kind.CONVERSION, null, null, id,
+            new BigDecimal("12.50"), "USD", time, null, "integration");
+    }
+
+    private static AdsEvent touch(UUID user, Instant time, AdsEvent.Kind kind) {
+        return new AdsEvent(UUID.randomUUID(), user, kind, UUID.randomUUID(), UUID.randomUUID(), null,
+            null, null, time, null, "integration");
+    }
+}

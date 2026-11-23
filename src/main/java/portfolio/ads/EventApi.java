@@ -78,9 +78,12 @@ class EventApi {
             List<AdsEvent> incoming;
             try {
                 var reader = json.reader().with(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
-                incoming = batch ? reader.forType(AdsEvent[].class).<AdsEvent[]>readValue(body) == null
-                    ? List.of() : java.util.Arrays.asList(reader.forType(AdsEvent[].class).<AdsEvent[]>readValue(body))
-                    : java.util.Collections.singletonList(reader.forType(AdsEvent.class).readValue(body));
+                if (batch) {
+                    AdsEvent[] values = reader.forType(AdsEvent[].class).readValue(body);
+                    incoming = values == null ? List.of() : java.util.Arrays.asList(values);
+                } else {
+                    incoming = java.util.Collections.singletonList(reader.forType(AdsEvent.class).readValue(body));
+                }
             } catch (com.fasterxml.jackson.core.JsonProcessingException malformed) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Malformed event JSON");
             }
