@@ -55,7 +55,7 @@ class DemoPublicProfileTest {
     @Test
     void lateTouchDuplicateFutureClickWindowAndConflictAreVisibleThroughHttp() throws Exception {
         String session = newSession();
-        UUID user = state(session).get("userId").asString();
+        UUID user = UUID.fromString(state(session).get("userId").asString());
         Instant anchor = Instant.now().minus(Duration.ofMinutes(2));
         UUID impressionId = UUID.randomUUID();
         UUID conversionId = UUID.randomUUID();
@@ -74,12 +74,12 @@ class DemoPublicProfileTest {
         var initial = state(session);
         assertThat(initial.get("conversionCount").asInt()).isEqualTo(1);
         assertThat(initial.at("/attributions/0/campaignId").asString()).isEqualTo(SEARCH.toString());
-        assertThat(post(session, conversion).get("outcome").asString()).isEqualTo("DUPLICATE");
+        assertThat(postEvent(session, conversion).get("outcome").asString()).isEqualTo("DUPLICATE");
         assertThat(state(session).get("conversionCount").asInt()).isEqualTo(1);
 
         var lateClick = event(UUID.randomUUID(), user, AdsEvent.Kind.CLICK, DISPLAY,
             anchor.minus(Duration.ofMinutes(12)), null);
-        assertThat(post(session, lateClick, anchor.minus(Duration.ofMinutes(8)))
+        assertThat(postEvent(session, lateClick, anchor.minus(Duration.ofMinutes(8)))
             .get("outcome").asString()).isEqualTo("ACCEPTED");
         assertThat(state(session).at("/attributions/0/campaignId").asString()).isEqualTo(DISPLAY.toString());
         var futureClick = event(UUID.randomUUID(), user, AdsEvent.Kind.CLICK, SOCIAL,
@@ -89,7 +89,7 @@ class DemoPublicProfileTest {
 
         var oldClick = event(UUID.randomUUID(), user, AdsEvent.Kind.CLICK, SEARCH,
             anchor.minus(Duration.ofDays(10)), null);
-        assertThat(post(session, oldClick).get("outcome").asString()).isEqualTo("ACCEPTED");
+        assertThat(postEvent(session, oldClick).get("outcome").asString()).isEqualTo("ACCEPTED");
         var noTouchPurchase = event(UUID.randomUUID(), user, AdsEvent.Kind.CONVERSION, null,
             anchor.minus(Duration.ofHours(47)), UUID.randomUUID());
         noTouchPurchase = new AdsEvent(noTouchPurchase.eventId(), noTouchPurchase.userId(),
@@ -103,7 +103,7 @@ class DemoPublicProfileTest {
 
         var latePurchase = event(UUID.randomUUID(), user, AdsEvent.Kind.CONVERSION, null,
             anchor.minus(Duration.ofHours(50)), UUID.randomUUID());
-        assertThat(post(session, latePurchase, latePurchase.eventTime().plus(Duration.ofHours(49)))
+        assertThat(postEvent(session, latePurchase, latePurchase.eventTime().plus(Duration.ofHours(49)))
             .get("outcome").asString()).isEqualTo("LATE");
         var afterLatePurchase = state(session);
         assertThat(afterLatePurchase.get("conversionCount").asInt()).isEqualTo(3);
@@ -113,7 +113,7 @@ class DemoPublicProfileTest {
 
         var conflict = new AdsEvent(impressionId, user, AdsEvent.Kind.IMPRESSION, SOCIAL,
             UUID.randomUUID(), null, null, null, anchor.minus(Duration.ofMinutes(25)), null, "public-demo-test");
-        assertThat(post(session, conflict).get("outcome").asString()).isEqualTo("CONFLICT");
+        assertThat(postEvent(session, conflict).get("outcome").asString()).isEqualTo("CONFLICT");
         var campaignRows = state(session).at("/metrics/campaigns");
         assertThat(campaignRows.has(SEARCH.toString())).isTrue();
         assertThat(campaignRows.has(DISPLAY.toString())).isTrue();
@@ -126,8 +126,8 @@ class DemoPublicProfileTest {
     void independentSessionsCannotReadOrResetEachOthersData() throws Exception {
         String first = newSession();
         String second = newSession();
-        UUID firstUser = state(first).get("userId").asString();
-        UUID secondUser = state(second).get("userId").asString();
+        UUID firstUser = UUID.fromString(state(first).get("userId").asString());
+        UUID secondUser = UUID.fromString(state(second).get("userId").asString());
         assertThat(first).isNotEqualTo(second);
 
         send(first, event(UUID.randomUUID(), firstUser, AdsEvent.Kind.IMPRESSION, DISPLAY, Instant.now(), null));
@@ -151,7 +151,7 @@ class DemoPublicProfileTest {
     @Test
     void concurrentStableRetriesOnlyCreateOneEventAndOversizedPayloadIsRejected() throws Exception {
         String session = newSession();
-        UUID user = state(session).get("userId").asString();
+        UUID user = UUID.fromString(state(session).get("userId").asString());
         var stable = event(UUID.randomUUID(), user, AdsEvent.Kind.IMPRESSION, DISPLAY, Instant.now(), null);
         try (var pool = Executors.newFixedThreadPool(20)) {
             var tasks = new ArrayList<java.util.concurrent.Future<MvcResult>>();
@@ -221,11 +221,11 @@ class DemoPublicProfileTest {
         return json.readTree(response.getResponse().getContentAsByteArray());
     }
 
-    private tools.jackson.databind.JsonNode post(String session, AdsEvent event) throws Exception {
-        return post(session, event, event.eventTime().plusSeconds(60));
+    private tools.jackson.databind.JsonNode postEvent(String session, AdsEvent event) throws Exception {
+        return postEvent(session, event, event.eventTime().plusSeconds(60));
     }
 
-    private tools.jackson.databind.JsonNode post(String session, AdsEvent event, Instant simulatedReceivedAt) throws Exception {
+    private tools.jackson.databind.JsonNode postEvent(String session, AdsEvent event, Instant simulatedReceivedAt) throws Exception {
         var response = mvc.perform(post("/api/v1/demo/events").header("X-Demo-Session", session)
                 .contentType(MediaType.APPLICATION_JSON).content(payload(event, simulatedReceivedAt)))
             .andExpect(status().isOk()).andReturn();
@@ -233,7 +233,7 @@ class DemoPublicProfileTest {
     }
 
     private void send(String session, AdsEvent event) throws Exception {
-        post(session, event);
+        postEvent(session, event);
     }
 
     private byte[] payload(AdsEvent event, Instant simulatedReceivedAt) throws Exception {
