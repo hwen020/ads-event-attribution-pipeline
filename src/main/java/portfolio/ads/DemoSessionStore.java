@@ -56,7 +56,7 @@ class DemoSessionStore {
     }
 
     EventResult ingest(UUID id, AdsEvent event, Instant simulatedReceivedAt) {
-        return require(id).ingest(event, simulatedReceivedAt);
+        return require(id).ingest(event, simulatedReceivedAt, eventLimit);
     }
 
     SpaceView reset(UUID id) {
@@ -179,7 +179,8 @@ class DemoSessionStore {
                 attributionViews, eventViews);
         }
 
-        private synchronized EventResult ingest(AdsEvent incoming, Instant simulatedReceivedAt) {
+        private synchronized EventResult ingest(AdsEvent incoming, Instant simulatedReceivedAt,
+                                                TokenBucket eventLimit) {
             if (!incoming.userId().equals(userId)) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Event user does not belong to this demo space");
             }
