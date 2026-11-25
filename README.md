@@ -2,7 +2,7 @@
 
 A Java backend portfolio project for measuring synthetic ad impressions, clicks and purchases. The default distributed stack runs one Spring Boot image in separate API and worker processes. An optional `public-demo` profile reuses the attribution core with synchronous in-process transport and temporary in-memory storage; it does not connect to Kafka or PostgreSQL.
 
-**Live demo:** Not published yet; a public URL will be added only after Render deployment and HTTPS acceptance checks pass. **Source:** [GitHub repository](https://github.com/hwen020/ads-event-attribution-pipeline) · **Release:** `v1.1.0` (pending)
+**Live demo:** Not published yet; a public URL will be added only after Render deployment and HTTPS acceptance checks pass. **Source:** [GitHub repository](https://github.com/hwen020/ads-event-attribution-pipeline) · **Version:** `1.1.0`
 
 The Java pipeline is maintained independently; the original Python Lab is a separate project and remains unchanged. This portfolio emphasizes skills relevant to Ads Backend, Ads Infrastructure and Signal & Measurement roles. It demonstrates an event-driven measurement system, not a production ad-serving service.
 
@@ -101,7 +101,7 @@ The rule is last eligible click within the inclusive 7-day window, falling back 
 
 Each browser tab stores its own random demo-space ID in `sessionStorage`; the server checks that every event's synthetic user ID belongs to that space. A reset clears only the current space. Limits are 200 simultaneous spaces per process, 100 unique events per space, a 16 KiB event-request body, 2 hours of inactivity before expiry, 10 space creations per minute, 30 general requests per minute per process and per space after bounded initial bursts, and 120 newly accepted events per minute per process. Expired spaces are periodically reclaimed. Data is memory-only and is lost on process restart, Render sleep or redeploy; this mode has no persistence or cross-instance coordination.
 
-`render.yaml` defines one Docker web service with `plan: free` and no database or message-broker resources. According to [Render's free-service documentation](https://render.com/docs/free), free web services can sleep after 15 minutes without inbound traffic; waking can take about one minute. The demo has not yet been provisioned in the Render account, so no public URL or live deployment is claimed. Do not select a paid plan or add paid services when creating it.
+`render.yaml` defines one Docker web service with `plan: free` and no database or message-broker resources. According to [Render's free-service documentation](https://render.com/docs/free), free web services can sleep after 15 minutes without inbound traffic; waking can take about one minute. The demo has not yet been provisioned: the current session cannot inspect the Render account, so existing services and free capacity remain unverified. No public URL or live deployment is claimed, and no cloud service or paid resource has been created. Before provisioning, inspect the account for an existing project service and confirm the free plan is available; do not select a paid plan or add paid services.
 
 ## Ingestion and consistency
 
