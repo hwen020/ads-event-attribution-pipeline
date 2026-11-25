@@ -67,7 +67,6 @@ class DemoApi {
         }
         var simulatedReceivedAt = payload.simulatedReceivedAt();
         if (simulatedReceivedAt == null || simulatedReceivedAt.isBefore(event.eventTime())
-                || simulatedReceivedAt.isAfter(event.eventTime().plus(Attribution.LATENESS))
                 || simulatedReceivedAt.isAfter(clock.instant().plus(java.time.Duration.ofMinutes(5)))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid simulated receive timestamp");
         }

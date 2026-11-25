@@ -34,6 +34,10 @@ class AttributionTest {
             conversionTime.minus(2, ChronoUnit.HOURS), UUID.randomUUID());
         var latestClick = touch(UUID.randomUUID(), user, AdsEvent.Kind.CLICK,
             conversionTime.minus(1, ChronoUnit.HOURS), UUID.randomUUID());
+        var boundaryClick = touch(UUID.randomUUID(), user, AdsEvent.Kind.CLICK,
+            conversionTime.minus(7, ChronoUnit.DAYS), UUID.randomUUID());
+        var boundaryImpression = touch(UUID.randomUUID(), user, AdsEvent.Kind.IMPRESSION,
+            conversionTime.minus(1, ChronoUnit.DAYS), UUID.randomUUID());
         var outsideWindow = touch(UUID.randomUUID(), user, AdsEvent.Kind.CLICK,
             conversionTime.minus(7, ChronoUnit.DAYS).minusNanos(1), UUID.randomUUID());
         var futureClick = touch(UUID.randomUUID(), user, AdsEvent.Kind.CLICK,
@@ -42,6 +46,8 @@ class AttributionTest {
         assertThat(Attribution.winner(user, conversionTime,
             List.of(impression, earlierClick, latestClick, outsideWindow, futureClick)))
             .contains(latestClick);
+        assertThat(Attribution.winner(user, conversionTime, List.of(boundaryClick))).contains(boundaryClick);
+        assertThat(Attribution.winner(user, conversionTime, List.of(boundaryImpression))).contains(boundaryImpression);
         assertThat(Attribution.winner(user, conversionTime, List.of(outsideWindow))).isEmpty();
     }
 

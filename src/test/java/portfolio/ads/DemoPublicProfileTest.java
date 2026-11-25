@@ -46,6 +46,10 @@ class DemoPublicProfileTest {
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.storage").value("ephemeral-in-memory"));
         mvc.perform(get("/"))
             .andExpect(status().isOk())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl(
+                "/demo-assets/index.html"));
+        mvc.perform(get("/demo-assets/index.html"))
+            .andExpect(status().isOk())
             .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(
                 org.hamcrest.Matchers.containsString("Public demo mode")));
         mvc.perform(get("/demo-assets/demo.js")).andExpect(status().isOk());

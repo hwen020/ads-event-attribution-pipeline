@@ -76,6 +76,8 @@ For a local standalone run, use Java 21 and Maven:
 SPRING_PROFILES_ACTIVE=public-demo mvn -B spring-boot:run
 ```
 
+In Windows PowerShell, set the profile with `$env:SPRING_PROFILES_ACTIVE = 'public-demo'` before running `mvn -B spring-boot:run`.
+
 Then open `http://localhost:8080`. Select **Run full walkthrough** to send synthetic impressions, clicks and purchases through real HTTP requests. It displays the Search attribution, a duplicate purchase retry, a later-arriving Display click that moves credit, a post-conversion click, an out-of-window click, an unattributed purchase, and a conflicting event ID. The event table distinguishes event time, simulated receive time and actual server processing time. Scenario receive times are intentionally simulated; latency and Kafka processing are not measured by this profile.
 
 The HTTP surface is `POST /api/v1/demo/sessions`, `GET /api/v1/demo/state`, `POST /api/v1/demo/events`, `POST /api/v1/demo/reset`, and `GET /api/v1/demo/health`. Create a space to receive its `sessionId` and synthetic `userId`, then send the session ID in `X-Demo-Session`. Event requests wrap an `event` and a server-validated `simulatedReceivedAt` timestamp:
@@ -99,7 +101,7 @@ The rule is last eligible click within the inclusive 7-day window, falling back 
 
 Each browser tab stores its own random demo-space ID in `sessionStorage`; the server checks that every event's synthetic user ID belongs to that space. A reset clears only the current space. Limits are 200 simultaneous spaces per process, 100 unique events per space, a 16 KiB event-request body, 2 hours of inactivity before expiry, 10 space creations per minute, 30 general requests per minute per process and per space after bounded initial bursts, and 120 newly accepted events per minute per process. Expired spaces are periodically reclaimed. Data is memory-only and is lost on process restart, Render sleep or redeploy; this mode has no persistence or cross-instance coordination.
 
-`render.yaml` defines one Docker web service with `plan: free` and no database or message-broker resources. Render's free web services can sleep after 15 minutes without inbound traffic; waking can take about one minute. The demo has not yet been provisioned in the Render account, so no public URL or live deployment is claimed. Do not select a paid plan or add paid services when creating it.
+`render.yaml` defines one Docker web service with `plan: free` and no database or message-broker resources. According to [Render's free-service documentation](https://render.com/docs/free), free web services can sleep after 15 minutes without inbound traffic; waking can take about one minute. The demo has not yet been provisioned in the Render account, so no public URL or live deployment is claimed. Do not select a paid plan or add paid services when creating it.
 
 ## Ingestion and consistency
 
