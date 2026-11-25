@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.context.annotation.Profile;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
@@ -13,6 +14,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
+@Profile("!public-demo")
 class Replay {
     private final JdbcTemplate db;
     private final TransactionTemplate tx;

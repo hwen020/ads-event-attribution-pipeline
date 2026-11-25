@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ads-event-attribution-demo
+    runtime: docker
+    plan: free
+    numInstances: 1
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/v1/demo/health
+    autoDeployTrigger: commit
+    maxShutdownDelaySeconds: 30
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: public-demo
+      - key: JAVA_TOOL_OPTIONS
+        value: -Xms32m -Xmx256m -XX:ActiveProcessorCount=2 -XX:+UseSerialGC

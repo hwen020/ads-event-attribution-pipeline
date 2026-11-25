@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.context.annotation.Profile;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
@@ -18,6 +19,7 @@ import java.util.UUID;
 @RestController
 @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
 @RequestMapping("/api/v1")
+@Profile("!public-demo")
 class MetricsApi {
     private static final String FROM = "2000-01-01T00:00:00Z";
     private static final String TO = "9999-01-01T00:00:00Z";
