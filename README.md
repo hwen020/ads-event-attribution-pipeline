@@ -105,6 +105,10 @@ A token-protected `POST /api/v1/replay/jobs?from=?&to=?&campaignId=?` snapshots 
 
 Run the benchmark at 1,000, 10,000 and 100,000 events with unique run IDs. The Compose workflow compares one and three worker consumer threads against one API, one Kafka broker, one PostgreSQL instance and six partitions. Each run records Docker CPU/RAM, persisted throughput, API acknowledgment error rate, sampled commit lag and P50/P95/P99 from API receipt to database processing. That latency includes queue waiting and is not HTTP acknowledgment latency. Throughput measures the interval from the first request through observed persistence; the workflow does not separately report a drain-only interval. One trial per workload and a shared single-broker/database setup do not establish production capacity.
 
+## Performance result
+
+The six-trial Boot 4.2.0 run at commit `24f51f5d1a10b924974488656afac17522bce9bf` persisted all 222,000 generated events with zero API acknowledgment errors ([GitHub Actions run and artifacts](https://github.com/hwen020/ads-event-attribution-pipeline/actions/runs/45560523604)). For 100,000 events, one consumer persisted 929.82 events/s with a receipt-to-database P95 of 94.369 seconds; three consumers persisted 1,789.27 events/s with a P95 of 45.295 seconds. This single-run comparison is a 92.4% throughput increase and a 52.0% lower measured P95. The P95 includes queue wait and is not API response latency. Hardware, all six results, sampled lag, measurement limits and the pre-upgrade baseline are in [VERIFICATION.md](VERIFICATION.md).
+
 ## Dependency security
 
 The CI audit scans the CycloneDX SBOM generated from the same Maven build as the application JAR. It checks that the SBOM and Trivy package list are non-empty, confirms the vulnerability database loaded, retains the raw scan report and log, and fails on scanner errors or HIGH/CRITICAL findings. The current local scan of the patched graph found zero vulnerabilities across all severities; the final CI run and downloadable reports are tracked in [VERIFICATION.md](VERIFICATION.md).
