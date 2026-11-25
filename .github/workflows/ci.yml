@@ -9,8 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -21,16 +21,90 @@ jobs:
         run: mvn -B -ntp com.github.spotbugs:spotbugs-maven-plugin:4.9.3.0:check
       - name: Dependency vulnerability audit
         if: ${{ !cancelled() }}
+        shell: bash
         run: |
+          set -euo pipefail
           mvn -B -ntp org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom -DoutputFormat=json
-          jq -e '.components | length > 0' target/bom.json
-          status=0
-          docker run --rm -v "$PWD/target:/artifacts:ro" aquasec/trivy:0.76.2 sbom \
-            --scanners vuln --severity HIGH,CRITICAL --list-all-pkgs --exit-code 1 --format json \
-            /artifacts/bom.json > target/dependency-audit.json || status=$?
-          jq -e '([.Results[]?.Packages[]?] | length) as $n | if $n > 0 then $n else error("No packages scanned") end' target/dependency-audit.json
-          jq '.Results[]?.Vulnerabilities[]? | {VulnerabilityID,PkgName,InstalledVersion,FixedVersion,Severity}' target/dependency-audit.json
-          exit "$status"
+          component_count="$(jq -er '.components | length | select(. > 0)' target/bom.json)"
+
+          jar="$(find target -maxdepth 1 -type f -name 'ads-attribution-*.jar' ! -name '*.original' -print -quit)"
+          test -n "$jar"
+          cp "$jar" target/audited-application.jar
+          (
+            cd target
+            sha256sum audited-application.jar > application.jar.sha256
+            sha256sum --check application.jar.sha256
+          )
+
+          scan_status=0
+          if docker run --rm -v "$PWD/target:/artifacts" aquasec/trivy:0.76.2 sbom \
+            --scanners vuln --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL --list-all-pkgs \
+            --exit-code 0 --format json --output /artifacts/dependency-audit.json \
+            /artifacts/bom.json 2> target/dependency-audit.log; then
+            scan_status=0
+          else
+            scan_status=$?
+          fi
+
+          test -s target/dependency-audit.json
+          test -s target/dependency-audit.log
+          grep -Eq 'Artifact successfully downloaded|DB is up to date' target/dependency-audit.log
+          grep -q 'Vulnerability scanning is enabled' target/dependency-audit.log
+          package_count="$(jq -er '[.Results[]?.Packages[]?] | length | select(. > 0)' target/dependency-audit.json)"
+          vulnerability_count="$(jq -er '[.Results[]?.Vulnerabilities[]?] | length' target/dependency-audit.json)"
+          high_critical_count="$(jq -er '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL")] | length' target/dependency-audit.json)"
+          sbom_sha256="$(sha256sum target/bom.json | cut -d ' ' -f 1)"
+          jar_sha256="$(cut -d ' ' -f 1 target/application.jar.sha256)"
+
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg trivyImage "aquasec/trivy:0.76.2" \
+            --arg sbomSha256 "$sbom_sha256" \
+            --arg applicationJarSha256 "$jar_sha256" \
+            --argjson sbomComponents "$component_count" \
+            --argjson scannedPackages "$package_count" \
+            --argjson vulnerabilities "$vulnerability_count" \
+            --argjson highCritical "$high_critical_count" \
+            '{commit: $commit, trivyImage: $trivyImage, vulnerabilityDatabaseLoaded: true,
+              sbomSha256: $sbomSha256, applicationJarSha256: $applicationJarSha256,
+              sbomComponents: $sbomComponents, scannedPackages: $scannedPackages,
+              vulnerabilities: $vulnerabilities, highCriticalVulnerabilities: $highCritical}' \
+            > target/dependency-audit-summary.json
+          cat target/dependency-audit-summary.json
+          {
+            echo "### Dependency vulnerability audit"
+            echo
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- SBOM components: $component_count"
+            echo "- Packages scanned: $package_count"
+            echo "- Vulnerabilities reported: $vulnerability_count"
+            echo "- HIGH/CRITICAL: $high_critical_count"
+            echo "- Trivy database load: confirmed"
+            echo "- Trivy JSON, scanner log, SBOM, summary and built JAR are uploaded as artifacts."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if (( scan_status != 0 )); then
+            exit "$scan_status"
+          fi
+          if (( high_critical_count > 0 )); then
+            jq '.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL") |
+              {VulnerabilityID,PkgName,InstalledVersion,FixedVersion,Severity}' target/dependency-audit.json
+            exit 1
+          fi
+      - name: Upload auditable build and dependency scan
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dependency-audit-${{ github.sha }}
+          path: |
+            target/bom.json
+            target/dependency-audit.json
+            target/dependency-audit.log
+            target/dependency-audit-summary.json
+            target/audited-application.jar
+            target/application.jar.sha256
+          if-no-files-found: warn
+          retention-days: 30
       - name: Compose validation
         run: docker compose config --quiet
       - name: Image build

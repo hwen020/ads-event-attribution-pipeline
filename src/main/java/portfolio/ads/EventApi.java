@@ -1,6 +1,5 @@
 package portfolio.ads;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Validator;
@@ -10,6 +9,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.time.Clock;
@@ -77,14 +79,14 @@ final class EventApi {
             if (body.length > MAX_BYTES) throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE);
             List<AdsEvent> incoming;
             try {
-                var reader = json.reader().with(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+                var reader = json.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
                 if (batch) {
                     AdsEvent[] values = reader.forType(AdsEvent[].class).readValue(body);
                     incoming = values == null ? List.of() : java.util.Arrays.asList(values);
                 } else {
                     incoming = java.util.Collections.singletonList(reader.forType(AdsEvent.class).readValue(body));
                 }
-            } catch (com.fasterxml.jackson.core.JsonProcessingException malformed) {
+            } catch (JacksonException malformed) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Malformed event JSON");
             }
             if (incoming.isEmpty() || incoming.size() > 500)

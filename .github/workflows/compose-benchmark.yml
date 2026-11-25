@@ -1,6 +1,11 @@
 name: Compose fault drill and benchmark
 on:
   workflow_dispatch:
+    inputs:
+      run_benchmarks:
+        description: Run all six throughput and latency trials
+        type: boolean
+        default: true
 permissions:
   contents: read
 jobs:
@@ -8,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -26,7 +31,20 @@ jobs:
           REPLAY_TOKEN="$token" docker compose up --no-build --wait --wait-timeout 240
       - name: Fault and recovery checks
         run: python3 scripts/faults.py
+      - name: Verify live Prometheus data and Grafana provisioning
+        run: |
+          dashboard="$(curl -fsS --retry 6 --retry-all-errors -u admin:admin http://localhost:3000/api/dashboards/uid/ads-pipeline)"
+          jq -e '.dashboard.panels | length >= 10' <<< "$dashboard"
+          for attempt in {1..12}; do
+            if docker compose exec -T prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=ads_deduplicated_total' |
+                jq -e 'any(.data.result[]; (.value[1] | tonumber) > 0)'; then
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
       - name: Measure one and three consumers
+        if: inputs.run_benchmarks
         run: |
           for workers in 1 3; do
             WORKER_CONCURRENCY="$workers" docker compose up -d --no-deps --wait worker
@@ -35,8 +53,8 @@ jobs:
             done
           done
       - name: Upload measurements
-        if: always()
-        uses: actions/upload-artifact@v4
+        if: always() && inputs.run_benchmarks
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results
           path: benchmark-results/*.json

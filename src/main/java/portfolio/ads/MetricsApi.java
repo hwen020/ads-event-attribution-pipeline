@@ -1,14 +1,14 @@
 package portfolio.ads;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.boot.actuate.health.HealthEndpoint;
+import org.springframework.boot.health.actuate.endpoint.HealthEndpoint;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.List;
@@ -74,7 +74,7 @@ class MetricsApi {
         for (var row : rows) {
             try {
                 row.put("attributed_revenue", json.readTree((String) row.get("attributed_revenue")));
-            } catch (JsonProcessingException malformed) {
+            } catch (JacksonException malformed) {
                 throw new IllegalStateException("Invalid revenue aggregate", malformed);
             }
         }
