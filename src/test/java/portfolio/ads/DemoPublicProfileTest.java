@@ -221,7 +221,10 @@ class DemoPublicProfileTest {
 
     private tools.jackson.databind.JsonNode state(String session) throws Exception {
         var response = mvc.perform(get("/api/v1/demo/state").header("X-Demo-Session", session))
-            .andExpect(status().isOk()).andReturn();
+            .andExpect(status().isOk())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                .string("Cache-Control", "no-store"))
+            .andReturn();
         return json.readTree(response.getResponse().getContentAsByteArray());
     }
 

@@ -188,6 +188,7 @@
       }
       if (response.status === 404 && sessionId) {
         sessionStorage.removeItem(stateKey);
+        sessionStorage.removeItem(anchorKey);
         sessionId = null;
       }
       throw new Error(detail);
