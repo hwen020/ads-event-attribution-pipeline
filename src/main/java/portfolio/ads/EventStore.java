@@ -3,6 +3,7 @@ package portfolio.ads;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.context.annotation.Profile;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -11,6 +12,7 @@ import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Service
+@Profile("!public-demo")
 class EventStore {
     private final JdbcTemplate db;
     private final MeterRegistry meters;

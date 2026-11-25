@@ -1,0 +1,20 @@
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - org.springframework.boot.kafka.autoconfigure.KafkaAutoConfiguration
+
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: framework
+  tomcat:
+    max-connections: 80
+    accept-count: 20
+    threads:
+      max: 24
+      min-spare: 2
+  compression:
+    enabled: true
+
+ads:
+  worker: false

@@ -1,6 +1,7 @@
 package portfolio.ads;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -14,6 +15,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/replay/jobs")
+@Profile("!public-demo")
 class ReplayApi {
     private final Replay replay;
     private final String secret;

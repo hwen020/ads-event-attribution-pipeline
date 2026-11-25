@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7fb">
+  <meta name="description" content="Explore event deduplication and late-arriving ad attribution in a live Java backend demo.">
+  <title>Ads Event Attribution · Live Demo</title>
+  <link rel="stylesheet" href="/demo-assets/demo.css">
+  <script src="/demo-assets/demo.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Ads Event Attribution home">
+      <span class="brand-mark">A</span>
+      <span>Signal / Measurement</span>
+    </a>
+    <nav aria-label="Project links">
+      <a href="https://github.com/hwen020/ads-event-attribution-pipeline" target="_blank" rel="noreferrer">GitHub ↗</a>
+      <a href="https://github.com/hwen020/ads-event-attribution-pipeline/blob/main/README.md" target="_blank" rel="noreferrer">Technical notes ↗</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">INTERACTIVE BACKEND WALKTHROUGH</p>
+        <h1>When events arrive out of order,<br class="desktop-break"> attribution should still make sense.</h1>
+        <p class="lede">Send a synthetic customer journey to a real Java service. Watch duplicate protection and a late click correct campaign credit in real time.</p>
+      </div>
+      <div class="mode-card">
+        <span class="live-dot" aria-hidden="true"></span>
+        <div><strong>Public demo mode</strong><small>Sync Java · in-memory storage</small></div>
+        <span class="mode-chip">NO KAFKA</span>
+      </div>
+    </section>
+
+    <section class="notice" role="note">
+      <strong>Isolated, temporary workspace.</strong>
+      <span>Each browser tab gets its own synthetic data space. Data expires after 2 hours of inactivity and is also lost when the free service restarts or sleeps. No sign-in or real customer data. Scenario receive times are simulated to demonstrate delayed processing instantly.</span>
+    </section>
+
+    <section class="controls panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">5-MINUTE DEMO</p>
+          <h2>Run the customer journey</h2>
+        </div>
+        <span id="busy-state" class="busy-state" aria-live="polite">Ready</span>
+      </div>
+      <p class="model-copy">Last eligible click wins within 7 days; otherwise an impression may receive credit within 24 hours. Event arrival is judged against a 48-hour lateness allowance. Window boundaries are inclusive.</p>
+      <div class="button-row">
+        <button id="run-demo" class="button primary">▶ <span>Run full walkthrough</span></button>
+        <button id="refresh" class="button secondary">Refresh results</button>
+        <button id="reset" class="button quiet">Reset my demo space</button>
+      </div>
+      <ol id="step-list" class="step-list" aria-label="Walkthrough progress">
+        <li data-step="impression"><span class="step-indicator">1</span><span>Impression</span><small>Awareness</small></li>
+        <li data-step="search"><span class="step-indicator">2</span><span>Search click</span><small>First touch</small></li>
+        <li data-step="conversion"><span class="step-indicator">3</span><span>Purchase</span><small>Credit: Search</small></li>
+        <li data-step="duplicate"><span class="step-indicator">4</span><span>Retry purchase</span><small>Deduplicated</small></li>
+        <li data-step="late"><span class="step-indicator">5</span><span>Late Display click</span><small>Credit corrected</small></li>
+        <li data-step="future"><span class="step-indicator">6</span><span>Future click</span><small>No retroactive credit</small></li>
+        <li data-step="window"><span class="step-indicator">7</span><span>Outside-window click</span><small>Too old to qualify</small></li>
+        <li data-step="unattributed"><span class="step-indicator">8</span><span>Unattributed purchase</span><small>No eligible touch</small></li>
+        <li data-step="conflict"><span class="step-indicator">9</span><span>Conflicting event ID</span><small>Original is retained</small></li>
+      </ol>
+      <p id="action-message" class="action-message" role="status" aria-live="polite">Create a temporary space, then start the walkthrough.</p>
+    </section>
+
+    <section class="dashboard-grid">
+      <article class="panel">
+        <div class="section-heading">
+          <div><p class="eyebrow">LIVE BACKEND STATE</p><h2>Journey & event time</h2></div>
+          <span id="session-expiry" class="muted">Opening a private space…</span>
+        </div>
+        <div class="journey" aria-label="Synthetic journey">
+          <div class="journey-node"><span class="node-icon">◉</span><strong>Impression</strong><small>Display campaign</small></div>
+          <span class="journey-line"></span>
+          <div class="journey-node"><span class="node-icon">⌕</span><strong>Click</strong><small>Search campaign</small></div>
+          <span class="journey-line"></span>
+          <div class="journey-node"><span class="node-icon">＄</span><strong>Purchase</strong><small>Conversion event</small></div>
+        </div>
+        <div class="metric-grid">
+          <div class="metric"><span>Impressions</span><strong id="metric-impressions">0</strong></div>
+          <div class="metric"><span>Clicks</span><strong id="metric-clicks">0</strong></div>
+          <div class="metric"><span>Conversions</span><strong id="metric-conversions">0</strong></div>
+          <div class="metric"><span>Unattributed</span><strong id="metric-unattributed">0</strong></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Arrival order</th><th>Event</th><th>Event time</th><th>Sim. received</th><th>Processed</th><th>Result</th></tr></thead>
+            <tbody id="events-body"><tr><td colspan="6" class="empty">Events sent by this walkthrough will appear here.</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="section-heading">
+          <div><p class="eyebrow">LIVE ATTRIBUTION</p><h2>Conversion credit</h2></div>
+          <span class="model-tag">Last eligible click</span>
+        </div>
+        <div id="attributions" class="attribution-list"><p class="empty">No conversions yet. Start the walkthrough to see credit assigned.</p></div>
+        <div class="divider"></div>
+        <div class="section-heading compact-heading"><div><p class="eyebrow">CAMPAIGN ROLLUP</p><h3>Metrics from stored events</h3></div></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Campaign</th><th>Impr.</th><th>Clicks</th><th>Conv.</th><th>Revenue</th></tr></thead>
+            <tbody id="campaigns-body"><tr><td colspan="5" class="empty">Campaign results will appear here.</td></tr></tbody>
+          </table>
+        </div>
+        <p class="source-note">All counts and credit above are computed from this workspace’s accepted backend events, not seeded dashboard results. Arrival order and processing time are real requests; receive timestamps are simulated by the guided scenario.</p>
+      </article>
+    </section>
+
+    <section class="footnote">
+      <strong>What this mode demonstrates:</strong> the production attribution rules, event-time windows, first-write-wins event IDs, duplicate conversion protection, and late-touch correction. Requests are processed synchronously in this Java process. The guided scenario supplies server-validated synthetic receive timestamps to model delayed processing without waiting days. The full distributed project separately uses Kafka and PostgreSQL; this free demo does not connect to either.
+    </section>
+  </main>
+  <footer>
+    <span>Built with Java 21 · Spring Boot · Synthetic events only</span>
+    <a href="https://github.com/hwen020/ads-event-attribution-pipeline" target="_blank" rel="noreferrer">View source on GitHub ↗</a>
+  </footer>
+</body>
+</html>

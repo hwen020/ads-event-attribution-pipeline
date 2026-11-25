@@ -1,6 +1,8 @@
 # Ads Event Attribution Pipeline
 
-A Java backend portfolio project for measuring synthetic ad impressions, clicks and purchases. One Spring Boot image runs in separate API and worker processes. This is an independent project using generated data.
+A Java backend portfolio project for measuring synthetic ad impressions, clicks and purchases. The default distributed stack runs one Spring Boot image in separate API and worker processes. An optional `public-demo` profile reuses the attribution core with synchronous in-process transport and temporary in-memory storage; it does not connect to Kafka or PostgreSQL.
+
+**Live demo:** Not published yet; a public URL will be added only after Render deployment and HTTPS acceptance checks pass. **Source:** [GitHub repository](https://github.com/hwen020/ads-event-attribution-pipeline) · **Release:** `v1.1.0` (pending)
 
 The Java pipeline is maintained independently; the original Python Lab is a separate project and remains unchanged. This portfolio emphasizes skills relevant to Ads Backend, Ads Infrastructure and Signal & Measurement roles. It demonstrates an event-driven measurement system, not a production ad-serving service.
 
@@ -59,6 +61,45 @@ docker compose down --volumes
 ```
 
 Actuator metrics are also available at `/actuator/prometheus`. Set `API_PORT` or `GRAFANA_PORT` in `.env` if a host port is occupied. Run host-side verification with `mvn -B verify`.
+
+## Public demo profile
+
+The public browser experience is served by the Java application itself when started with `SPRING_PROFILES_ACTIVE=public-demo`. The root page and its assets are only registered in this profile, leaving the default distributed API surface unchanged. This profile disables Kafka and PostgreSQL auto-configuration and reports its actual mode at `GET /api/v1/demo/health`:
+
+```json
+{"status":"UP","mode":"public-demo","transport":"synchronous-in-process","storage":"ephemeral-in-memory"}
+```
+
+For a local standalone run, use Java 21 and Maven:
+
+```sh
+SPRING_PROFILES_ACTIVE=public-demo mvn -B spring-boot:run
+```
+
+Then open `http://localhost:8080`. Select **Run full walkthrough** to send synthetic impressions, clicks and purchases through real HTTP requests. It displays the Search attribution, a duplicate purchase retry, a later-arriving Display click that moves credit, a post-conversion click, an out-of-window click, an unattributed purchase, and a conflicting event ID. The event table distinguishes event time, simulated receive time and actual server processing time. Scenario receive times are intentionally simulated; latency and Kafka processing are not measured by this profile.
+
+The HTTP surface is `POST /api/v1/demo/sessions`, `GET /api/v1/demo/state`, `POST /api/v1/demo/events`, `POST /api/v1/demo/reset`, and `GET /api/v1/demo/health`. Create a space to receive its `sessionId` and synthetic `userId`, then send the session ID in `X-Demo-Session`. Event requests wrap an `event` and a server-validated `simulatedReceivedAt` timestamp:
+
+```json
+{
+  "event": {
+    "eventId": "20000000-0000-4000-8000-000000000001",
+    "userId": "<userId returned when creating the space>",
+    "type": "CLICK",
+    "campaignId": "10000000-0000-4000-8000-000000000001",
+    "adId": "30000000-0000-4000-8000-000000000001",
+    "eventTime": "2026-01-01T12:00:00Z",
+    "source": "public-api-example"
+  },
+  "simulatedReceivedAt": "2026-01-01T12:00:01Z"
+}
+```
+
+The rule is last eligible click within the inclusive 7-day window, falling back to an impression in the inclusive 24-hour window. An event received more than 48 hours after event time is ineligible. Stable event IDs make retrying a request safe: identical event IDs are duplicates, conflicting content keeps the original payload, and a repeated conversion ID does not add another conversion. Attribution revisions increase when the winning touch changes.
+
+Each browser tab stores its own random demo-space ID in `sessionStorage`; the server checks that every event's synthetic user ID belongs to that space. A reset clears only the current space. Limits are 200 simultaneous spaces per process, 100 unique events per space, a 16 KiB event-request body, 2 hours of inactivity before expiry, 10 space creations per minute, 30 general requests per minute per process and per space after bounded initial bursts, and 120 newly accepted events per minute per process. Expired spaces are periodically reclaimed. Data is memory-only and is lost on process restart, Render sleep or redeploy; this mode has no persistence or cross-instance coordination.
+
+`render.yaml` defines one Docker web service with `plan: free` and no database or message-broker resources. Render's free web services can sleep after 15 minutes without inbound traffic; waking can take about one minute. The demo has not yet been provisioned in the Render account, so no public URL or live deployment is claimed. Do not select a paid plan or add paid services when creating it.
 
 ## Ingestion and consistency
 

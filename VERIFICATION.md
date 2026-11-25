@@ -4,6 +4,14 @@
 
 The original Master Task, `AGENTS.md`, standalone handoff and acceptance checklist were not present in the repository. This handoff uses the tracked README, prior verification evidence and the user's acceptance requirements. The separate Python Lab was left untouched.
 
+## Public-demo delivery addendum
+
+The public-demo work is an incremental `v1.1.0` candidate on `feat/public-demo`, based on the published `v1.0.0` main commit `d2e10f287292feb00be45ba1ec6daf85eb7a9ef5`. It adds an isolated `public-demo` Spring profile, Java-served responsive UI, in-process attribution/session store, bounded API and tests. The default Kafka/PostgreSQL pipeline remains the default; public-demo excludes both broker and datasource auto-configuration and reports `synchronous-in-process` / `ephemeral-in-memory`. UI resources and `/` are profile-only.
+
+The Render Blueprint specifies one Docker web service on `plan: free`, with no database or broker resources. No Render service, paid resource or deployment has been created. Account resources and free capacity remain unverified: the dashboard page open timed out before it could be inspected, and no login or OAuth action was attempted. Consequently there is no verified public URL yet and no claim of completed public deployment.
+
+The public-profile tests now cover the mode endpoint and page, event-time windows, duplicate conversion retry, late-touch credit correction, post-conversion click, out-of-window touch, conflict preservation, concurrent retries, two-space isolation/reset, session expiry, event cap and oversized body. These new tests, the default-profile regression, and CI have not yet completed for this candidate. Record the exact PR, CI run, merge commit, deployment ID and public acceptance evidence here after they exist; do not treat source/configuration alone as deployment evidence.
+
 | Requirement | Implementation and evidence | Status |
 |---|---|---|
 | Java 21 pipeline and transaction/offset boundary | Spring Boot 4.2.0 API publishes with `acks=all`; the consumer commits the PostgreSQL transaction before manually acknowledging Kafka. | Implemented; Maven verification passed locally. |

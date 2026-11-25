@@ -11,6 +11,7 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -28,6 +29,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 @Configuration
+@Profile("!public-demo")
 class KafkaConfiguration {
     static final String EVENTS = "ads.events.v1";
     static final String DLQ = "ads.events.v1.dlt";
@@ -49,6 +51,7 @@ class KafkaConfiguration {
 }
 
 @Component
+@Profile("!public-demo")
 class Transport {
     record Envelope(AdsEvent event, Instant receivedAt) {}
     private final KafkaTemplate<String, String> kafka;
