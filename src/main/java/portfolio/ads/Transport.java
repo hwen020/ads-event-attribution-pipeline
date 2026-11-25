@@ -1,6 +1,5 @@
 package portfolio.ads;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Validator;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -19,6 +18,8 @@ import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 import org.springframework.util.backoff.FixedBackOff;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.nio.charset.StandardCharsets;
@@ -94,7 +95,7 @@ class Transport {
                     throw new IllegalArgumentException("Invalid event envelope");
                 }
                 event = envelope.event().received(envelope.receivedAt());
-            } catch (com.fasterxml.jackson.core.JsonProcessingException | IllegalArgumentException invalid) {
+            } catch (JacksonException | IllegalArgumentException invalid) {
                 var headers = new RecordHeaders(record.headers().toArray());
                 headers.add("failure", "invalid-envelope".getBytes(StandardCharsets.UTF_8));
                 kafka.send(new ProducerRecord<>(KafkaConfiguration.DLQ, record.partition(),

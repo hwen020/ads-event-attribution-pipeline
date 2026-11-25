@@ -1,10 +1,9 @@
 package portfolio.ads;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ConsumerFactory;
@@ -18,11 +17,18 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.List;
@@ -49,7 +55,7 @@ class PipelineIT {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
     }
 
-    @Autowired TestRestTemplate http;
+    @LocalServerPort int port;
     @Autowired JdbcTemplate db;
     @Autowired javax.sql.DataSource dataSource;
     @Autowired Replay replay;
@@ -59,11 +65,12 @@ class PipelineIT {
     @Autowired Transport transport;
     @Autowired ObjectMapper json;
     @MockitoSpyBean EventStore store;
+    private final HttpClient http = HttpClient.newHttpClient();
 
     private static final Duration WAIT = Duration.ofSeconds(45);
 
     @Test
-    void repairsLateArrivalAndReplaysWithoutDoubleCounting() {
+    void repairsLateArrivalAndReplaysWithoutDoubleCounting() throws Exception {
         var now = Instant.now();
         var user = UUID.randomUUID();
         var conversion = conversion(user, now.minusSeconds(10), UUID.randomUUID());
@@ -73,8 +80,17 @@ class PipelineIT {
         send(view);
         awaitWinner(conversion, view);
         var click = touch(user, now.minusSeconds(30), AdsEvent.Kind.CLICK);
+        assertThat(click.campaignId()).isNotEqualTo(view.campaignId());
         send(click);
         awaitWinner(conversion, click);
+        assertThat(db.queryForObject("SELECT coalesce(sum(conversions),0) FROM campaign_metrics WHERE campaign_id=?",
+            Long.class, view.campaignId())).isZero();
+        assertThat(db.queryForObject("SELECT coalesce(sum(conversions),0) FROM campaign_metrics WHERE campaign_id=?",
+            Long.class, click.campaignId())).isEqualTo(1L);
+        assertThat(db.queryForObject("SELECT coalesce(sum(revenue),0) FROM campaign_metrics WHERE campaign_id=?",
+            BigDecimal.class, view.campaignId())).isEqualByComparingTo("0");
+        assertThat(db.queryForObject("SELECT coalesce(sum(revenue),0) FROM campaign_metrics WHERE campaign_id=?",
+            BigDecimal.class, click.campaignId())).isEqualByComparingTo("12.50");
         var tie = touch(user, click.eventTime(), AdsEvent.Kind.CLICK);
         send(tie);
         send(tie);
@@ -145,6 +161,111 @@ class PipelineIT {
             .isEqualTo(1);
     }
 
+    @Test
+    void preservesFirstPayloadWhenAnEventIdIsReused() throws Exception {
+        var time = Instant.now();
+        var original = touch(UUID.randomUUID(), time, AdsEvent.Kind.CLICK).received(time);
+        var conversion = conversion(UUID.randomUUID(), time, UUID.randomUUID()).received(time);
+        var conflict = new AdsEvent(original.eventId(), conversion.userId(), conversion.type(),
+            conversion.campaignId(), conversion.adId(), conversion.conversionId(),
+            conversion.conversionValue(), conversion.currency(), conversion.eventTime(),
+            conversion.receivedAt(), conversion.source());
+        var originalPayload = json.writeValueAsString(new Transport.Envelope(original, time));
+        var conflictingPayload = json.writeValueAsString(new Transport.Envelope(conflict, time));
+
+        assertThat(store.apply(original, originalPayload)).isTrue();
+        assertThat(store.apply(conflict, conflictingPayload)).isFalse();
+
+        assertThat(db.queryForObject("SELECT count(*) FROM raw_events WHERE event_id=?",
+            Long.class, original.eventId())).isEqualTo(1);
+        assertThat(db.queryForObject("SELECT user_id FROM raw_events WHERE event_id=?",
+            UUID.class, original.eventId())).isEqualTo(original.userId());
+        assertThat(db.queryForObject("SELECT kind FROM raw_events WHERE event_id=?",
+            String.class, original.eventId())).isEqualTo("CLICK");
+        assertThat(db.queryForObject("SELECT payload FROM raw_events WHERE event_id=?",
+            String.class, original.eventId())).isEqualTo(originalPayload);
+        assertThat(db.queryForObject("SELECT count(*) FROM attribution_results WHERE conversion_id=?",
+            Long.class, conflict.conversionId())).isZero();
+    }
+
+    @Test
+    void concurrentDuplicateEventIdsCreateOnlyOneBusinessEffect() throws Exception {
+        var time = Instant.now();
+        var user = UUID.randomUUID();
+        var eventId = UUID.randomUUID();
+        var initial = conversion(user, time, UUID.randomUUID()).received(time);
+        var first = new AdsEvent(eventId, initial.userId(), initial.type(), initial.campaignId(),
+            initial.adId(), initial.conversionId(), initial.conversionValue(), initial.currency(),
+            initial.eventTime(), initial.receivedAt(), initial.source());
+        var second = new AdsEvent(eventId, user, AdsEvent.Kind.CONVERSION, null, null, UUID.randomUUID(),
+            new BigDecimal("98.76"), "USD", time, time, "concurrent-duplicate");
+        var firstPayload = json.writeValueAsString(new Transport.Envelope(first, time));
+        var secondPayload = json.writeValueAsString(new Transport.Envelope(second, time));
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            var firstWrite = executor.submit(() -> {
+                ready.countDown();
+                if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("Start timed out");
+                return store.apply(first, firstPayload);
+            });
+            var secondWrite = executor.submit(() -> {
+                ready.countDown();
+                if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("Start timed out");
+                return store.apply(second, secondPayload);
+            });
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            int inserted = (firstWrite.get(20, TimeUnit.SECONDS) ? 1 : 0)
+                + (secondWrite.get(20, TimeUnit.SECONDS) ? 1 : 0);
+            assertThat(inserted).isEqualTo(1);
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+        }
+
+        assertThat(db.queryForObject("SELECT count(*) FROM raw_events WHERE event_id=?",
+            Long.class, eventId)).isEqualTo(1);
+        assertThat(db.queryForObject("SELECT count(*) FROM attribution_results WHERE event_id=?",
+            Long.class, eventId)).isEqualTo(1);
+        var storedConversionId = db.queryForObject("SELECT conversion_id FROM attribution_results WHERE event_id=?",
+            UUID.class, eventId);
+        assertThat(storedConversionId).isIn(first.conversionId(), second.conversionId());
+        assertThat(db.queryForObject("SELECT payload FROM raw_events WHERE event_id=?",
+            String.class, eventId)).isEqualTo(storedConversionId.equals(first.conversionId())
+                ? firstPayload : secondPayload);
+    }
+
+    @Test
+    void rollsBackRawEventWhenAttributionInsertFails() {
+        var time = Instant.now();
+        var event = conversion(UUID.randomUUID(), time, UUID.randomUUID()).received(time);
+        db.execute("""
+            CREATE FUNCTION reject_attribution_insert() RETURNS trigger AS $$
+            BEGIN
+                RAISE EXCEPTION 'injected attribution insert failure';
+            END;
+            $$ LANGUAGE plpgsql
+            """);
+        try {
+            db.execute("""
+                CREATE TRIGGER reject_attribution_insert
+                BEFORE INSERT ON attribution_results
+                FOR EACH ROW EXECUTE FUNCTION reject_attribution_insert()
+                """);
+            assertThatThrownBy(() -> store.apply(event,
+                json.writeValueAsString(new Transport.Envelope(event, time))))
+                .isInstanceOf(RuntimeException.class);
+            assertThat(db.queryForObject("SELECT count(*) FROM raw_events WHERE event_id=?",
+                Long.class, event.eventId())).isZero();
+            assertThat(db.queryForObject("SELECT count(*) FROM attribution_results WHERE event_id=?",
+                Long.class, event.eventId())).isZero();
+        } finally {
+            db.execute("DROP TRIGGER IF EXISTS reject_attribution_insert ON attribution_results");
+            db.execute("DROP FUNCTION IF EXISTS reject_attribution_insert()");
+        }
+    }
 
     @Test
     void rejectsOverdueTouchAndQuarantinesPoisonRecord() throws Exception {
@@ -175,7 +296,7 @@ class PipelineIT {
     }
 
     @Test
-    void convergesAcrossArrivalOrdersAndChecksViewWindow() {
+    void convergesAcrossArrivalOrdersAndChecksViewWindow() throws Exception {
         var time = Instant.now();
         var left = UUID.randomUUID();
         var right = UUID.randomUUID();
@@ -201,7 +322,7 @@ class PipelineIT {
     }
 
     @Test
-    void resumesAReplayWhoseTransactionWasInterrupted() {
+    void resumesAReplayWhoseTransactionWasInterrupted() throws Exception {
         var time = Instant.now();
         var user = UUID.randomUUID();
         var conversion = conversion(user, time, UUID.randomUUID());
@@ -244,23 +365,23 @@ class PipelineIT {
         send(click);
         send(conversion);
         awaitWinner(conversion, click);
-        var metrics = http.getForEntity("/api/v1/metrics/campaigns/{id}", Map.class, view.campaignId());
-        assertThat(metrics.getStatusCode().value()).isEqualTo(200);
-        var body = metrics.getBody();
+        var metrics = get("/api/v1/metrics/campaigns/" + view.campaignId());
+        assertThat(metrics.statusCode()).isEqualTo(200);
+        Map<?, ?> body = json.readValue(metrics.body(), Map.class);
         assertThat(body.get("impressions")).isEqualTo(1);
         assertThat(body.get("clicks")).isEqualTo(1);
         assertThat(body.get("conversions")).isEqualTo(1);
         assertThat(((Map<?, ?>) body.get("attributed_revenue")).get("USD")).isEqualTo(12.5);
-        var campaigns = http.getForEntity("/api/v1/metrics/campaigns?campaignId={id}", List.class,
-            view.campaignId());
-        assertThat(campaigns.getStatusCode().value()).isEqualTo(200);
-        assertThat(((Map<?, ?>) campaigns.getBody().getFirst()).get("attributed_revenue"))
+        var campaigns = get("/api/v1/metrics/campaigns?campaignId=" + view.campaignId());
+        assertThat(campaigns.statusCode()).isEqualTo(200);
+        List<?> campaignRows = json.readValue(campaigns.body(), List.class);
+        assertThat(((Map<?, ?>) campaignRows.getFirst()).get("attributed_revenue"))
             .isInstanceOf(Map.class);
-        assertThat(http.getForEntity("/api/v1/health", Map.class).getStatusCode().value()).isEqualTo(200);
+        assertThat(get("/api/v1/health").statusCode()).isEqualTo(200);
     }
 
     @Test
-    void retainsOverdueConversionsWithoutCreditingRevenue() {
+    void retainsOverdueConversionsWithoutCreditingRevenue() throws Exception {
         var time = Instant.now().minus(Duration.ofDays(3));
         var conversion = conversion(UUID.randomUUID(), time, UUID.randomUUID());
         send(conversion);
@@ -271,9 +392,20 @@ class PipelineIT {
         });
     }
 
-    private void send(AdsEvent event) {
-        assertThat(http.postForEntity("/api/v1/events", event, String.class).getStatusCode().value())
-            .isEqualTo(202);
+    private void send(AdsEvent event) throws Exception {
+        assertThat(post("/api/v1/events", event).statusCode()).isEqualTo(202);
+    }
+
+    private HttpResponse<String> get(String path) throws Exception {
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build();
+        return http.send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> post(String path, Object payload) throws Exception {
+        var request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(payload))).build();
+        return http.send(request, HttpResponse.BodyHandlers.ofString());
     }
 
     private Map<String, Object> result(AdsEvent conversion) {
