@@ -66,6 +66,7 @@ h3 { font-size: 14px; margin: 0; }
 .action-message { min-height: 17px; margin: 12px 0 0; color: var(--muted); font-size: 11px; }
 .action-message.error { color: var(--red); }
 .dashboard-grid { display: grid; grid-template-columns: 1.04fr .96fr; gap: 17px; align-items: start; }
+.dashboard-grid > .panel { min-width: 0; }
 .muted { color: var(--muted); font-size: 10px; }
 .journey { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-radius: 10px; background: #f8f9fc; padding: 15px 13px; margin: 18px 0 13px; }
 .journey-node { display: grid; justify-items: center; gap: 5px; text-align: center; }
@@ -108,7 +109,7 @@ footer { display: flex; align-items: center; justify-content: space-between; gap
   .mode-card { width: 100%; }
   .notice { display: grid; gap: 3px; }
   .step-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .dashboard-grid { grid-template-columns: 1fr; }
+  .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
   .panel { padding: 17px 14px; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .journey { padding-inline: 8px; }
